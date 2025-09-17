@@ -1755,7 +1755,7 @@
             'diffusionGamma', 'diffusionIntensity', 'diffusionRadiusD', 'diffusionStrengthD',
             'diffusionRadiusE', 'diffusionStrengthE', 'diffusionRadiusF', 'diffusionStrengthF',
             'diffusionTint2R', 'diffusionTint2G', 'diffusionTint2B', 'diffusionSpread2',
-            'diffusionGamma2', 'diffusionIntensity2', 'thresholdGamma2', 'thresholdWhite2',
+            'diffusionGamma2', 'diffusionIntensity2',
             // Texture sliders
             'grainScale', 'grainIntensity', 'grainSaturation', 'grainReduceShadows',
             'grainShadowSat', 'grainReduceHighlights', 'grainHighlightSat', 'highPassRadius',
@@ -1794,14 +1794,13 @@
                 render();
             } else {
                 const remaining = LIVE_FULL_RENDER_MIN_INTERVAL - elapsed;
-                if (!state.timer) {
-                    state.timer = setTimeout(() => {
-                        state.lastTime = performance.now();
-                        state.timer = null;
-                        if (isSimplePreviewing) isSimplePreviewing = false;
-                        if (imageTexture) render();
-                    }, remaining);
-                }
+                if (state.timer) clearTimeout(state.timer);
+                state.timer = setTimeout(() => {
+                    state.lastTime = performance.now();
+                    state.timer = null;
+                    if (isSimplePreviewing) isSimplePreviewing = false;
+                    if (imageTexture) render();
+                }, remaining);
             }
         }
         const sprocketSources = {

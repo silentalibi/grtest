@@ -1747,6 +1747,63 @@
             '8mm 50D': './assets/grain/8mm50D.png'
         };
         const dustSources = Array.from({length: 20}, (_, i) => `./assets/grain/dust${(i + 1).toString().padStart(2, '0')}.png`);
+        const LIVE_FULL_RENDER_SLIDER_IDS = new Set([
+            // Optics sliders (excluding special preview-based ones)
+            'mtfMask', 'mtfSoftness', 'diffusionRadius', 'diffusionStrength',
+            'diffusionRadiusB', 'diffusionStrengthB', 'diffusionRadiusC', 'diffusionStrengthC',
+            'diffusionTintR', 'diffusionTintG', 'diffusionTintB', 'diffusionSpread',
+            'diffusionGamma', 'diffusionIntensity', 'diffusionRadiusD', 'diffusionStrengthD',
+            'diffusionRadiusE', 'diffusionStrengthE', 'diffusionRadiusF', 'diffusionStrengthF',
+            'diffusionTint2R', 'diffusionTint2G', 'diffusionTint2B', 'diffusionSpread2',
+            'diffusionGamma2', 'diffusionIntensity2', 'thresholdGamma2', 'thresholdWhite2',
+            // Texture sliders
+            'grainScale', 'grainIntensity', 'grainSaturation', 'grainReduceShadows',
+            'grainShadowSat', 'grainReduceHighlights', 'grainHighlightSat', 'highPassRadius',
+            'highPassOpacity',
+            // Dust sliders
+            'dustMoveX', 'dustMoveY', 'dustRotate'
+        ]);
+        const LIVE_FULL_RENDER_MIN_INTERVAL = 90;
+        const liveFullRenderStates = new Map();
+        function triggerLiveFullRender(sliderId, immediate = false) {
+            if (!LIVE_FULL_RENDER_SLIDER_IDS.has(sliderId) || !imageTexture) return;
+            let state = liveFullRenderStates.get(sliderId);
+            if (!state) {
+                state = { lastTime: 0, timer: null };
+                liveFullRenderStates.set(sliderId, state);
+            }
+            const now = performance.now();
+            if (immediate) {
+                if (state.timer) {
+                    clearTimeout(state.timer);
+                    state.timer = null;
+                }
+                state.lastTime = now;
+                if (isSimplePreviewing) isSimplePreviewing = false;
+                render();
+                return;
+            }
+            const elapsed = now - state.lastTime;
+            if (elapsed >= LIVE_FULL_RENDER_MIN_INTERVAL) {
+                state.lastTime = now;
+                if (state.timer) {
+                    clearTimeout(state.timer);
+                    state.timer = null;
+                }
+                if (isSimplePreviewing) isSimplePreviewing = false;
+                render();
+            } else {
+                const remaining = LIVE_FULL_RENDER_MIN_INTERVAL - elapsed;
+                if (!state.timer) {
+                    state.timer = setTimeout(() => {
+                        state.lastTime = performance.now();
+                        state.timer = null;
+                        if (isSimplePreviewing) isSimplePreviewing = false;
+                        if (imageTexture) render();
+                    }, remaining);
+                }
+            }
+        }
         const sprocketSources = {
             'Spectra 100': './assets/grain/spectra100.png',
             'Spectra 400': './assets/grain/spectra400.png',
@@ -6626,6 +6683,7 @@ function applyBorderBlur() {
                 let initialClientY = 0, dragDirection = null, shouldZoomToFit = false;
                 const handleMove = (e) => {
                     if (!isDragging) return;
+                    const isLiveFullRenderSlider = LIVE_FULL_RENDER_SLIDER_IDS.has(slider.id);
                     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
                     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
                     if (dragDirection === null) { 
@@ -6746,72 +6804,110 @@ function applyBorderBlur() {
                             if (slider.id.includes('diffusion') || slider.id === 'halationIntensity' || slider.id === 'mtfMask' || slider.id === 'mtfSoftness' || slider.id === 'blackpoint' || slider.id === 'whitepoint' || slider.id === 'thresholdGamma' || slider.id === 'coreBlur' || slider.id === 'midBlur' || slider.id === 'outerBlur' || slider.id === 'midBlurGain' || slider.id === 'outerBlurGain' || slider.id.includes('tintR2') || slider.id.includes('tintG2') || slider.id.includes('tintB2')) {
                                 invalidateDiffusionBuffer();
                             }
-                            if (imageTexture) render();
+                            if (isLiveFullRenderSlider) {
+                                triggerLiveFullRender(slider.id);
+                            } else if (imageTexture) {
+                                render();
+                            }
                         }
                         throttleTimeout = setTimeout(() => { throttleTimeout = null; }, 80);
                     }
                 };
                 const stopDrag = () => {
                     if (!isDragging) return;
+                    const isLiveFullRenderSlider = LIVE_FULL_RENDER_SLIDER_IDS.has(slider.id);
+                    const cheatAspectProxyEnabled = cheatAspectProxyToggle?.checked || false;
+                    const valueChanged = parseFloat(slider.value) !== initialValue;
                     isDragging = false;
                     window.removeEventListener('mousemove', handleMove);
                     window.removeEventListener('touchmove', handleMove);
                     window.removeEventListener('mouseup', stopDrag);
                     window.removeEventListener('touchend', stopDrag);
-                    
+
                     // Handle vertical drag end - ensure preview mode is reset
                     if (dragDirection === 'vertical') {
-                        const cheatAspectProxyEnabled = cheatAspectProxyToggle?.checked || false;
-                            const isPreviewSlider = (slider.id === 'overscan' || slider.id === 'framing' || slider.id === 'borderScale' || slider.id === 'imageScale' || slider.id === 'adjacentFrameDistance' || slider.id === 'borderBlur' || (cheatAspectProxyEnabled && (slider.id === 'cheatAspectX' || slider.id === 'cheatAspectY')) || slider.id === 'sprocketScale' || slider.id === 'sprocket16mmScale' || slider.id === 'sprocket35mm178Scale' || slider.id === 'sprocket35mm178Translation' || slider.id === 'sprocket35mm240Scale' || slider.id === 'sprocket35mm240Translation' || slider.id === 'sprocket35mm133Scale' || slider.id === 'sprocket35mm133Translation');
+                        const isPreviewSlider = (slider.id === 'overscan' || slider.id === 'framing' || slider.id === 'borderScale' || slider.id === 'imageScale' || slider.id === 'adjacentFrameDistance' || slider.id === 'borderBlur' || (cheatAspectProxyEnabled && (slider.id === 'cheatAspectX' || slider.id === 'cheatAspectY')) || slider.id === 'sprocketScale' || slider.id === 'sprocket16mmScale' || slider.id === 'sprocket35mm178Scale' || slider.id === 'sprocket35mm178Translation' || slider.id === 'sprocket35mm240Scale' || slider.id === 'sprocket35mm240Translation' || slider.id === 'sprocket35mm133Scale' || slider.id === 'sprocket35mm133Translation');
                         if (isPreviewSlider && isSimplePreviewing) {
                             isSimplePreviewing = false;
                             render(); // Restore full render
                         }
                         return; // Don't run horizontal drag cleanup
                     }
-                    
-                    if (dragDirection === 'horizontal') {
-                        clearTimeout(throttleTimeout);
-                        throttleTimeout = null;
-                        // End of fast preview, re-enable full pipeline
-                        const cheatAspectProxyEnabled = cheatAspectProxyToggle?.checked || false;
-                        const wasPreviewSlider = (slider.id === 'overscan' || slider.id === 'framing' || slider.id === 'borderScale' || slider.id === 'imageScale' || slider.id === 'adjacentFrameDistance' || slider.id === 'borderBlur' || (cheatAspectProxyEnabled && (slider.id === 'cheatAspectX' || slider.id === 'cheatAspectY')) || slider.id === 'sprocketScale' || slider.id === 'sprocket16mmScale' || slider.id === 'sprocket35mmCineScale' || slider.id === 'sprocket35mmCineTranslation');
-                        if (slider.id === 'overscan') {
+
+                    if (dragDirection === null && valueChanged) {
+                        if (slider.id === 'maxResSlider') {
+                            slider.value = snapRes(slider.value);
+                            document.getElementById('maxResVal').textContent = formatPx(slider.value);
+                        } else if (slider.id === 'exportResSlider') {
+                            slider.value = snapRes(slider.value);
+                            document.getElementById('exportResVal').textContent = formatPx(slider.value);
+                        } else if (slider.id === 'backgroundSlider') {
+                            updateBackgroundFromSlider();
+                        } else {
+                            updateSliderLabels();
+                        }
+                        if (slider.id === 'cheatAspectX' || slider.id === 'cheatAspectY') {
                             calculateOverscanScales();
-                        } else if (slider.id === 'borderBlur') {
-                            // Ensure final full-res render path reflects the new blur
-                            const isSpecialBorderEngine = ['8mm', '16mm', '35mm-178', '35mm-240', '35mm-133', '35mm-add'].includes(window.__borderEngine);
-                            if (isSpecialBorderEngine && originalBorderTexture) {
-                                applyBorderBlur(); // <<< Final call to apply blur correctly
-                            }
-                        } else if (slider.id === 'diffusionThreshold' || slider.id === 'diffusionThreshold2') {
-                            thresholdPreviewActive = false;
-                            suppressRenders = false;
-                            invalidateDiffusionBuffer();
-                            render();
-                        } else if (slider.id === 'maxResSlider') {
-                            if (originalFileBlob) { 
-                                // Only trigger processing overlay for resolutions above 2048px
-                                const currentRes = parseInt(slider.value, 10);
-                                if (currentRes <= 2048) {
-                                    suppressImageFade = true;
-                                }
-                                loadImageAndResize(originalFileBlob); 
+                            if (adjacentFrameDistanceValLabel) {
+                                const effectiveValue = Math.round(originalAdjacentFrameDistance);
+                                adjacentFrameDistanceValLabel.textContent = effectiveValue.toString();
+                                adjacentFrameDistanceSlider.value = effectiveValue;
                             }
                         }
-                        if (wasPreviewSlider) {
-                            // Exit interactive preview and run full pipeline
-                            isSimplePreviewing = false;
-                            render();
-                        } else if (slider.id === 'framePadding') {
-                            // Frame padding should render live without preview mode
-                            if (imageTexture) render();
-                        } else { 
-                            // Invalidate diffusion cache for diffusion-related sliders at end of drag
-                            if (slider.id.includes('diffusion') || slider.id === 'halationIntensity' || slider.id === 'mtfMask' || slider.id === 'mtfSoftness' || slider.id === 'blackpoint' || slider.id === 'whitepoint' || slider.id === 'thresholdGamma' || slider.id === 'coreBlur' || slider.id === 'midBlur' || slider.id === 'outerBlur' || slider.id === 'midBlurGain' || slider.id === 'outerBlurGain' || slider.id.includes('tintR2') || slider.id.includes('tintG2') || slider.id.includes('tintB2')) {
-                                invalidateDiffusionBuffer();
+                        dragDirection = 'horizontal';
+                    }
+
+                    if (dragDirection !== 'horizontal') {
+                        return;
+                    }
+
+                    clearTimeout(throttleTimeout);
+                    throttleTimeout = null;
+
+                    // End of fast preview, re-enable full pipeline
+                    const wasPreviewSlider = (slider.id === 'overscan' || slider.id === 'framing' || slider.id === 'borderScale' || slider.id === 'imageScale' || slider.id === 'adjacentFrameDistance' || slider.id === 'borderBlur' || (cheatAspectProxyEnabled && (slider.id === 'cheatAspectX' || slider.id === 'cheatAspectY')) || slider.id === 'sprocketScale' || slider.id === 'sprocket16mmScale' || slider.id === 'sprocket35mmCineScale' || slider.id === 'sprocket35mmCineTranslation');
+                    if (slider.id === 'overscan') {
+                        calculateOverscanScales();
+                    } else if (slider.id === 'borderBlur') {
+                        // Ensure final full-res render path reflects the new blur
+                        const isSpecialBorderEngine = ['8mm', '16mm', '35mm-178', '35mm-240', '35mm-133', '35mm-add'].includes(window.__borderEngine);
+                        if (isSpecialBorderEngine && originalBorderTexture) {
+                            applyBorderBlur(); // <<< Final call to apply blur correctly
+                        }
+                    } else if ((slider.id === 'diffusionThreshold' || slider.id === 'diffusionThreshold2') && valueChanged) {
+                        thresholdPreviewActive = false;
+                        suppressRenders = false;
+                        invalidateDiffusionBuffer();
+                        render();
+                    } else if (slider.id === 'maxResSlider' && valueChanged) {
+                        if (originalFileBlob) {
+                            // Only trigger processing overlay for resolutions above 2048px
+                            const currentRes = parseInt(slider.value, 10);
+                            if (currentRes <= 2048) {
+                                suppressImageFade = true;
                             }
-                            if (imageTexture && slider.id !== 'maxResSlider') render(); 
+                            loadImageAndResize(originalFileBlob);
+                        }
+                    }
+
+                    if (wasPreviewSlider) {
+                        // Exit interactive preview and run full pipeline
+                        isSimplePreviewing = false;
+                        render();
+                    } else if (slider.id === 'framePadding') {
+                        // Frame padding should render live without preview mode
+                        if (imageTexture && valueChanged) render();
+                    } else {
+                        // Invalidate diffusion cache for diffusion-related sliders at end of drag
+                        if (valueChanged && (slider.id.includes('diffusion') || slider.id === 'halationIntensity' || slider.id === 'mtfMask' || slider.id === 'mtfSoftness' || slider.id === 'blackpoint' || slider.id === 'whitepoint' || slider.id === 'thresholdGamma' || slider.id === 'coreBlur' || slider.id === 'midBlur' || slider.id === 'outerBlur' || slider.id === 'midBlurGain' || slider.id === 'outerBlurGain' || slider.id.includes('tintR2') || slider.id.includes('tintG2') || slider.id.includes('tintB2'))) {
+                            invalidateDiffusionBuffer();
+                        }
+                        if (slider.id !== 'maxResSlider' && valueChanged) {
+                            if (isLiveFullRenderSlider) {
+                                triggerLiveFullRender(slider.id, true);
+                            } else if (imageTexture) {
+                                render();
+                            }
                         }
                     }
                 };
@@ -9447,64 +9543,64 @@ function applyBorderBlur() {
             diffusionTintRSlider.addEventListener('input', () => {
                 diffusionTintRValLabel.textContent = parseFloat(diffusionTintRSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionTintR');
             });
             diffusionTintRSlider.addEventListener('change', () => {
                 diffusionTintRValLabel.textContent = parseFloat(diffusionTintRSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionTintR', true);
             });
         }
         if (diffusionTintGSlider) {
             diffusionTintGSlider.addEventListener('input', () => {
                 diffusionTintGValLabel.textContent = parseFloat(diffusionTintGSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionTintG');
             });
             diffusionTintGSlider.addEventListener('change', () => {
                 diffusionTintGValLabel.textContent = parseFloat(diffusionTintGSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionTintG', true);
             });
         }
         if (diffusionTintBSlider) {
             diffusionTintBSlider.addEventListener('input', () => {
                 diffusionTintBValLabel.textContent = parseFloat(diffusionTintBSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionTintB');
             });
             diffusionTintBSlider.addEventListener('change', () => {
                 diffusionTintBValLabel.textContent = parseFloat(diffusionTintBSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionTintB', true);
             });
         }
-        
+
         // Diffusion spread slider event listeners
         if (diffusionSpreadSlider) {
             diffusionSpreadSlider.addEventListener('input', () => {
                 diffusionSpreadValLabel.textContent = parseFloat(diffusionSpreadSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionSpread');
             });
             diffusionSpreadSlider.addEventListener('change', () => {
                 diffusionSpreadValLabel.textContent = parseFloat(diffusionSpreadSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionSpread', true);
             });
         }
-        
+
         // Diffusion gamma slider event listeners
         if (diffusionGammaSlider) {
             diffusionGammaSlider.addEventListener('input', () => {
                 diffusionGammaValLabel.textContent = parseFloat(diffusionGammaSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionGamma');
             });
             diffusionGammaSlider.addEventListener('change', () => {
                 diffusionGammaValLabel.textContent = parseFloat(diffusionGammaSlider.value).toFixed(2);
                 invalidateDiffusionBuffer();
-                render();
+                triggerLiveFullRender('diffusionGamma', true);
             });
         }
         
@@ -9671,44 +9767,44 @@ function applyBorderBlur() {
         if (grainReduceShadowsSlider) {
             grainReduceShadowsSlider.addEventListener('input', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainReduceShadows');
             });
             grainReduceShadowsSlider.addEventListener('change', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainReduceShadows', true);
             });
         }
 
         if (grainShadowSatSlider) {
             grainShadowSatSlider.addEventListener('input', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainShadowSat');
             });
             grainShadowSatSlider.addEventListener('change', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainShadowSat', true);
             });
         }
 
         if (grainReduceHighlightsSlider) {
             grainReduceHighlightsSlider.addEventListener('input', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainReduceHighlights');
             });
             grainReduceHighlightsSlider.addEventListener('change', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainReduceHighlights', true);
             });
         }
 
         if (grainHighlightSatSlider) {
             grainHighlightSatSlider.addEventListener('input', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainHighlightSat');
             });
             grainHighlightSatSlider.addEventListener('change', () => {
                 updateSliderLabels();
-                if (imageTexture) render();
+                triggerLiveFullRender('grainHighlightSat', true);
             });
         }
 
